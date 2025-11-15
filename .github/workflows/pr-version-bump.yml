@@ -38,24 +38,21 @@ jobs:
           # PR description
           gh api \
             repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }} \
-            --jq '.body // ""' \
-            --raw-output >> "$comments_file"
+            --jq '.body // ""' | jq -r '.' >> "$comments_file"
           printf "\n" >> "$comments_file"
 
           # Issue comments
           gh api \
             repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
             --paginate \
-            --jq '.[] | .body // ""' \
-            --raw-output >> "$comments_file"
+            --jq '.[] | .body // ""' | jq -r '.' >> "$comments_file"
           printf "\n" >> "$comments_file"
 
           # Review comments (inline)
           gh api \
             repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments \
             --paginate \
-            --jq '.[] | .body // ""' \
-            --raw-output >> "$comments_file"
+            --jq '.[] | .body // ""' | jq -r '.' >> "$comments_file"
 
           if [ ! -s "$comments_file" ]; then
             touch "$comments_file"
