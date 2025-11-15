@@ -29,10 +29,16 @@ jobs:
       # FETCH PR COMMENTS
       # -------------------------------
       - name: Fetch PR comments
-        id: comments
-        uses: peter-evans/fetch-pr-comments@v3
-        with:
-          issue-number: ${{ github.event.pull_request.number }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api \
+            repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
+            --paginate \
+            --jq '.[].body' > comments.txt
+          if [ ! -s comments.txt ]; then
+            touch comments.txt
+          fi
 
       # -------------------------------
       # DETERMINE BUMP ACTION
@@ -46,32 +52,32 @@ jobs:
           set_patch=""
           set_full_version=""
 
-          echo '${{ steps.comments.outputs.comments }}' > comments.json
+          comments_file="comments.txt"
 
           # ---------- Highest priority: !version X.Y.Z ----------
-          if grep -Eo "!version[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+" comments.json > match.txt; then
+          if grep -Eo "!version[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+" "$comments_file" > match.txt; then
             set_full_version=$(grep -Eo "[0-9]+\.[0-9]+\.[0-9]+" match.txt)
             bump="set-full"
 
           # ---------- Forced version components ----------
-          elif grep -Eo "!major[[:space:]]+[0-9]+" comments.json > match.txt; then
+          elif grep -Eo "!major[[:space:]]+[0-9]+" "$comments_file" > match.txt; then
             set_major=$(grep -Eo "[0-9]+" match.txt)
             bump="set-major"
 
-          elif grep -Eo "!minor[[:space:]]+[0-9]+" comments.json > match.txt; then
+          elif grep -Eo "!minor[[:space:]]+[0-9]+" "$comments_file" > match.txt; then
             set_minor=$(grep -Eo "[0-9]+" match.txt)
             bump="set-minor"
 
-          elif grep -Eo "!patch[[:space:]]+[0-9]+" comments.json > match.txt; then
+          elif grep -Eo "!patch[[:space:]]+[0-9]+" "$comments_file" > match.txt; then
             set_patch=$(grep -Eo "[0-9]+" match.txt)
             bump="set-patch"
 
           # ---------- Simple semantic bump commands ----------
-          elif grep -q "#major" comments.json; then
+          elif grep -q "#major" "$comments_file"; then
             bump="major"
-          elif grep -q "#minor" comments.json; then
+          elif grep -q "#minor" "$comments_file"; then
             bump="minor"
-          elif grep -q "#patch" comments.json; then
+          elif grep -q "#patch" "$comments_file"; then
             bump="patch"
           fi
 
