@@ -1,0 +1,146 @@
+name: Version Bump Based on PR Comments
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    branches:
+      - production
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  bump-version:
+    runs-on: ubuntu-latest
+
+    steps:
+      # -------------------------------
+      # CHECKOUT PR BRANCH
+      # -------------------------------
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          fetch-depth: 0
+
+      # -------------------------------
+      # FETCH PR COMMENTS
+      # -------------------------------
+      - name: Fetch PR comments
+        id: comments
+        uses: peter-evans/fetch-pr-comments@v3
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+
+      # -------------------------------
+      # DETERMINE BUMP ACTION
+      # -------------------------------
+      - name: Determine bump action from comments
+        id: bump
+        run: |
+          bump="patch"  # default fallback
+          set_major=""
+          set_minor=""
+          set_patch=""
+          set_full_version=""
+
+          echo '${{ steps.comments.outputs.comments }}' > comments.json
+
+          # ---------- Highest priority: !version X.Y.Z ----------
+          if grep -Eo "!version[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+" comments.json > match.txt; then
+            set_full_version=$(grep -Eo "[0-9]+\.[0-9]+\.[0-9]+" match.txt)
+            bump="set-full"
+
+          # ---------- Forced version components ----------
+          elif grep -Eo "!major[[:space:]]+[0-9]+" comments.json > match.txt; then
+            set_major=$(grep -Eo "[0-9]+" match.txt)
+            bump="set-major"
+
+          elif grep -Eo "!minor[[:space:]]+[0-9]+" comments.json > match.txt; then
+            set_minor=$(grep -Eo "[0-9]+" match.txt)
+            bump="set-minor"
+
+          elif grep -Eo "!patch[[:space:]]+[0-9]+" comments.json > match.txt; then
+            set_patch=$(grep -Eo "[0-9]+" match.txt)
+            bump="set-patch"
+
+          # ---------- Simple semantic bump commands ----------
+          elif grep -q "#major" comments.json; then
+            bump="major"
+          elif grep -q "#minor" comments.json; then
+            bump="minor"
+          elif grep -q "#patch" comments.json; then
+            bump="patch"
+          fi
+
+          echo "bump=$bump" >> $GITHUB_OUTPUT
+          echo "set_major=$set_major" >> $GITHUB_OUTPUT
+          echo "set_minor=$set_minor" >> $GITHUB_OUTPUT
+          echo "set_patch=$set_patch" >> $GITHUB_OUTPUT
+          echo "set_full_version=$set_full_version" >> $GITHUB_OUTPUT
+
+      # -------------------------------
+      # APPLY VERSION BUMP
+      # -------------------------------
+      - name: Bump or set version in pyproject.toml
+        id: version
+        run: |
+          bump=${{ steps.bump.outputs.bump }}
+          set_major=${{ steps.bump.outputs.set_major }}
+          set_minor=${{ steps.bump.outputs.set_minor }}
+          set_patch=${{ steps.bump.outputs.set_patch }}
+          set_full=${{ steps.bump.outputs.set_full_version }}
+
+          # Read current version
+          old=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          IFS='.' read -r major minor patch <<< "$old"
+
+          # ---------- Full version override ----------
+          if [ "$bump" = "set-full" ]; then
+            new="$set_full"
+
+          # ---------- Forced version overrides ----------
+          elif [ "$bump" = "set-major" ]; then
+            major=$set_major; minor=0; patch=0
+            new="$major.$minor.$patch"
+
+          elif [ "$bump" = "set-minor" ]; then
+            minor=$set_minor; patch=0
+            new="$major.$minor.$patch"
+
+          elif [ "$bump" = "set-patch" ]; then
+            patch=$set_patch
+            new="$major.$minor.$patch"
+
+          # ---------- Semantic commands ----------
+          elif [ "$bump" = "major" ]; then
+            major=$((major+1)); minor=0; patch=0
+            new="$major.$minor.$patch"
+
+          elif [ "$bump" = "minor" ]; then
+            minor=$((minor+1)); patch=0
+            new="$major.$minor.$patch"
+
+          # ---------- Default patch bump ----------
+          else
+            patch=$((patch+1))
+            new="$major.$minor.$patch"
+          fi
+
+          # Apply version change
+          sed -i "s/version = \".*\"/version = \"$new\"/" pyproject.toml
+          echo "new=$new" >> $GITHUB_OUTPUT
+
+      # -------------------------------
+      # COMMIT BACK TO PR BRANCH
+      # -------------------------------
+      - name: Commit version bump to PR
+        run: |
+          git config user.email "ci@andvision.se"
+          git config user.name "CI Bot"
+
+          git add pyproject.toml
+          git commit -m "chore: bump version to ${{ steps.version.outputs.new }}" || echo "No changes to commit"
+          git push || echo "No changes to push"
